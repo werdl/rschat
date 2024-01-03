@@ -2,6 +2,8 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use rusqlite::params;
 use std::collections::HashMap;
 use warp::{self, reply, Filter};
+use thetime::{Ntp, Time};
+use percent_encoding::{percent_decode_str, utf8_percent_encode, CONTROLS};
 extern crate time;
 
 #[tokio::main]
@@ -24,8 +26,8 @@ async fn main() {
     // exists/<user>
 
     let post =
-        warp::path!("post" / String / String / String / String).map(|user, pass, to, msg| {
-            reply::html(if post(user, pass, msg, to) {
+        warp::path!("post" / String / String / String / String).map(|user, pass, to, msg: String| {
+            reply::html(if post(user, pass, percent_decode_str(&msg).decode_utf8().unwrap().to_string(), to) {
                 "ERR"
             } else {
                 "OK"
@@ -36,32 +38,33 @@ async fn main() {
     let list = warp::path!("list" / String / String).map(|user: String, pass| {
         if valid(user.clone(), pass) {
             let db_conn = get_db_conn();
-            let query = "SELECT * FROM messages";
-    
-            let maps = match db_conn.prepare(query) {
-                Ok(mut stmt) => stmt.query_map(params![], |row| {
-                    let mut map = HashMap::new();
-                    map.insert("from_uname", row.get::<usize, String>(1).unwrap());
-                    map.insert("msg", row.get::<usize, String>(3)?);
-                    map.insert("ts", row.get::<usize, String>(4)?);
-                    Ok(map)
-                }).map(|result| result.collect::<Result<Vec<_>, _>>()),
-            
+            let query = format!("SELECT * FROM messages WHERE to_uname = \"{}\"", user);
+
+            let maps = match db_conn.prepare(&query) {
+                Ok(mut stmt) => stmt
+                    .query_map(params![], |row| {
+                        let mut map = HashMap::new();
+                        map.insert("from_uname", row.get::<usize, String>(1).unwrap());
+                        map.insert("msg", row.get::<usize, String>(3)?);
+                        map.insert("ts", row.get::<usize, String>(4)?);
+                        Ok(map)
+                    })
+                    .map(|result| result.collect::<Result<Vec<_>, _>>()),
+
                 Err(_) => {
                     return reply::json(&vec!["Database query failed"]);
-                },
+                }
             };
-            
+
             match maps {
                 Ok(maps) => reply::json(&maps.unwrap()),
                 Err(_) => reply::json(&vec!["Database query failed"]),
             }
-            } else {
+        } else {
             reply::json::<Vec<&str>>(&vec!["BADUNAME"])
         }
     });
 
-    
     warp::serve(hello.or(new).or(login).or(exists_q).or(post).or(list))
         .run(([0, 0, 0, 0], 3030))
         .await;
@@ -97,7 +100,7 @@ fn post(name: String, pass: String, msg: String, to: String) -> bool {
                     name,
                     to,
                     msg,
-                    time::Instant::now().elapsed().as_seconds_f32().to_string()
+                    Ntp::now().unix().to_string()
                 ],
             )
             .is_err()
@@ -128,7 +131,7 @@ fn valid(name: String, pass: String) -> bool {
 //         res.query([]).into_iter().for_each(|row| {
 //             row.map(|x| println!("row"));
 //         });
-    
+
 // }
 
 fn exists(user: &str) -> bool {
