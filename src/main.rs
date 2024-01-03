@@ -3,14 +3,17 @@ use rusqlite::params;
 use std::collections::HashMap;
 use warp::{self, reply, Filter};
 use thetime::{Ntp, Time};
-use percent_encoding::{percent_decode_str, utf8_percent_encode, CONTROLS};
+use percent_encoding::{percent_decode_str};
+
+
+use std::fs;
 extern crate time;
 
 #[tokio::main]
 async fn main() {
-    // list("test".to_string());
+    let index = warp::path::end().map(|| reply::html(fs::read_to_string("content.html").unwrap()));
 
-    let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
+    // let hello = warp::path!("hello" / String).map(|name| format!("Hello, {}!", name));
 
     let new = warp::path!("new" / String / String).and_then(handle_new_user);
     // new/<user>/<pass>
@@ -65,15 +68,20 @@ async fn main() {
         }
     });
 
-    warp::serve(hello.or(new).or(login).or(exists_q).or(post).or(list))
+    let cors = warp::cors()
+            .allow_any_origin()
+            .allow_methods(vec!["GET", "POST"])
+            .allow_headers(vec!["Content-Type"]);
+
+    warp::serve(index.or(new).or(login).or(exists_q).or(post).or(list).with(cors))
         .run(([0, 0, 0, 0], 3030))
         .await;
 }
 
-async fn handle_new_user(
-    name: String,
-    pass: String,
-) -> Result<reply::Html<&'static str>, warp::Rejection> {
+async fn handle_new_user(name: String, pass: String,) -> Result<reply::Html<&'static str>, warp::Rejection> {
+    if exists(&name.clone()) {
+        return Ok(reply::html("BADUSERNAME"))
+    }
     let hashed_pass = hash(&pass, DEFAULT_COST).expect("Failed to hash password");
     let db_conn = get_db_conn();
 
@@ -84,7 +92,7 @@ async fn handle_new_user(
         )
         .is_err()
     {
-        Ok(reply::html("ERR"))
+        Ok(reply::html("BADSQL"))
     } else {
         Ok(reply::html("OK"))
     }
